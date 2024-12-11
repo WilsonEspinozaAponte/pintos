@@ -66,6 +66,13 @@ start_process (void *file_name_)
   if (!success) 
     thread_exit ();
 
+#ifdef USERPROG
+  // Actualiza el PCB para indicar que el proceso ha sido cargado exitosamente 
+  struct thread *t = thread_current();
+  t->pcb->is_loaded = true;
+  sema_up (&t->pcb->sema_load);
+#endif
+
   /* Start the user process by simulating a return from an
      interrupt, implemented by intr_exit (in
      threads/intr-stubs.S).  Because intr_exit takes all of its
@@ -88,7 +95,6 @@ start_process (void *file_name_)
 int
 process_wait (tid_t child_tid UNUSED) 
 {
-  while (true);
   return -1;
 }
 
@@ -115,6 +121,15 @@ process_exit (void)
       pagedir_activate (NULL);
       pagedir_destroy (pd);
     }
+
+#ifdef USERPROG
+  // Libera el PCB del proceso actual para evitar fugas de memoria 
+  if (cur->pcb != NULL) 
+    {
+      free (cur->pcb);
+      cur->pcb = NULL;
+    }
+#endif
 }
 
 /* Sets up the CPU for running user code in the current
@@ -132,7 +147,8 @@ process_activate (void)
      interrupts. */
   tss_update ();
 }
-
+
+
 /* We load ELF binaries.  The following definitions are taken
    from the ELF specification, [ELF1], more-or-less verbatim.  */
 
@@ -191,7 +207,7 @@ struct Elf32_Phdr
 #define PT_PHDR    6            /* Program header table. */
 #define PT_STACK   0x6474e551   /* Stack segment. */
 
-/* Flags for p_flags.  See [ELF3] 2-3 and 2-4. */
+/* Flags for p_flags.  See [ELF3] 2-3 y 2-4. */
 #define PF_X 1          /* Executable. */
 #define PF_W 2          /* Writable. */
 #define PF_R 4          /* Readable. */
@@ -316,7 +332,8 @@ load (const char *file_name, void (**eip) (void), void **esp)
   file_close (file);
   return success;
 }
-
+
+
 /* load() helpers. */
 
 static bool install_page (void *upage, void *kpage, bool writable);
@@ -427,24 +444,22 @@ load_segment (struct file *file, off_t ofs, uint8_t *upage,
 
 /* Create a minimal stack by mapping a zeroed page at the top of
    user virtual memory. */
-bool 
+static bool
 setup_stack (void **esp) 
 {
-    uint8_t *kpage;
-    bool success = false;
+  uint8_t *kpage;
+  bool success = false;
 
-    kpage = palloc_get_page (PAL_USER | PAL_ZERO);
-    if (kpage != NULL) 
+  kpage = palloc_get_page (PAL_USER | PAL_ZERO);
+  if (kpage != NULL) 
     {
-        success = install_page (((uint8_t *) PHYS_BASE) - PGSIZE, kpage, true);
-        if (success) {
-            *esp = PHYS_BASE;
-            printf("Stack initialized at: %p\n", *esp);
-        } else {
-            palloc_free_page (kpage);
-        }
+      success = install_page (((uint8_t *) PHYS_BASE) - PGSIZE, kpage, true);
+      if (success)
+        *esp = PHYS_BASE;
+      else
+        palloc_free_page (kpage);
     }
-    return success;
+  return success;
 }
 
 /* Adds a mapping from user virtual address UPAGE to kernel

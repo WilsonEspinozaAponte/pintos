@@ -13,7 +13,10 @@
 #include "threads/vaddr.h"
 #ifdef USERPROG
 #include "userprog/process.h"
+#include <stdlib.h> 
 #endif
+
+uint32_t thread_stack_ofs = offsetof(struct thread, stack);
 
 /* Random value for struct thread's `magic' member.
    Used to detect stack overflow.  See the big comment at the top
@@ -60,7 +63,6 @@ static unsigned thread_ticks;   /* # of timer ticks since last yield. */
 bool thread_mlfqs;
 
 static void kernel_thread (thread_func *, void *aux);
-
 static void idle (void *aux UNUSED);
 static struct thread *running_thread (void);
 static struct thread *next_thread_to_run (void);
@@ -98,6 +100,17 @@ thread_init (void)
   init_thread (initial_thread, "main", PRI_DEFAULT);
   initial_thread->status = THREAD_RUNNING;
   initial_thread->tid = allocate_tid ();
+
+#ifdef USERPROG
+  // Asigna e inicializa el PCB para el hilo inicial 
+  initial_thread->pcb = malloc (sizeof(struct process_control_block));
+  if (initial_thread->pcb == NULL) {
+    PANIC ("Fallo al asignar PCB para el hilo inicial");
+  }
+  initial_thread->pcb->exit_code = 0;
+  initial_thread->pcb->is_loaded = false;
+  sema_init (&initial_thread->pcb->sema_load, 0);
+#endif
 }
 
 /* Starts preemptive thread scheduling by enabling interrupts.
@@ -182,6 +195,18 @@ thread_create (const char *name, int priority,
   /* Initialize thread. */
   init_thread (t, name, priority);
   tid = t->tid = allocate_tid ();
+
+#ifdef USERPROG
+  // Asigna e inicializa el PCB para el nuevo hilo 
+  t->pcb = malloc (sizeof(struct process_control_block));
+  if (t->pcb == NULL) {
+    palloc_free_page (t);
+    return TID_ERROR;
+  }
+  t->pcb->exit_code = 0;
+  t->pcb->is_loaded = false;
+  sema_init (&t->pcb->sema_load, 0);
+#endif
 
   /* Stack frame for kernel_thread(). */
   kf = alloc_frame (t, sizeof *kf);
@@ -375,7 +400,8 @@ thread_get_recent_cpu (void)
   /* Not yet implemented. */
   return 0;
 }
-
+
+
 /* Idle thread.  Executes when no other thread is ready to run.
 
    The idle thread is initially put on the ready list by
@@ -424,7 +450,8 @@ kernel_thread (thread_func *function, void *aux)
   function (aux);       /* Execute the thread function. */
   thread_exit ();       /* If function() returns, kill the thread. */
 }
-
+
+
 /* Returns the running thread. */
 struct thread *
 running_thread (void) 
@@ -434,7 +461,7 @@ running_thread (void)
   /* Copy the CPU's stack pointer into `esp', and then round that
      down to the start of a page.  Because `struct thread' is
      always at the beginning of a page and the stack pointer is
-     somewhere in the middle, this locates the curent thread. */
+     somewhere in the middle, this locates the current thread. */
   asm ("mov %%esp, %0" : "=g" (esp));
   return pg_round_down (esp);
 }
@@ -467,9 +494,6 @@ init_thread (struct thread *t, const char *name, int priority)
   old_level = intr_disable ();
   list_push_back (&all_list, &t->allelem);
   intr_set_level (old_level);
-
-  list_init(&t->fd_list);    // Inicializar la lista de descriptores
-  t->next_fd = 2;            // Fd 0 y 1 reservados (stdin y stdout)
 }
 
 /* Allocates a SIZE-byte frame at the top of thread T's stack and
@@ -581,7 +605,3 @@ allocate_tid (void)
 
   return tid;
 }
-
-/* Offset of `stack' member within `struct thread'.
-   Used by switch.S, which can't figure it out on its own. */
-uint32_t thread_stack_ofs = offsetof (struct thread, stack);

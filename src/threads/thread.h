@@ -4,6 +4,8 @@
 #include <debug.h>
 #include <list.h>
 #include <stdint.h>
+#include "filesys/file.h"
+#include "threads/synch.h"
 
 /* States in a thread's life cycle. */
 enum thread_status
@@ -23,6 +25,13 @@ typedef int tid_t;
 #define PRI_MIN 0                       /* Lowest priority. */
 #define PRI_DEFAULT 31                  /* Default priority. */
 #define PRI_MAX 63                      /* Highest priority. */
+
+// Process Control Block (PCB) 
+struct process_control_block {
+    int exit_code;                  // Código de salida del proceso 
+    bool is_loaded;                 // Indica si el proceso está cargado 
+    struct semaphore sema_load;     // Semáforo para sincronización de carga 
+};
 
 /* A kernel thread or user process.
 
@@ -89,8 +98,6 @@ struct thread
     uint8_t *stack;                     /* Saved stack pointer. */
     int priority;                       /* Priority. */
     struct list_elem allelem;           /* List element for all threads list. */
-    struct list fd_list;          // Lista de descriptores de archivos
-    int next_fd;                  // Siguiente descriptor disponible
 
     /* Shared between thread.c and synch.c. */
     struct list_elem elem;              /* List element. */
@@ -98,11 +105,16 @@ struct thread
 #ifdef USERPROG
     /* Owned by userprog/process.c. */
     uint32_t *pagedir;                  /* Page directory. */
+
+    // Puntero al PCB del proceso 
+    struct process_control_block *pcb;
 #endif
 
     /* Owned by thread.c. */
     unsigned magic;                     /* Detects stack overflow. */
   };
+
+extern uint32_t thread_stack_ofs;
 
 /* If false (default), use round-robin scheduler.
    If true, use multi-level feedback queue scheduler.
@@ -139,12 +151,6 @@ int thread_get_nice (void);
 void thread_set_nice (int);
 int thread_get_recent_cpu (void);
 int thread_get_load_avg (void);
-
-struct file_descriptor {
-    int id;                   // Numero del archivo
-    struct file *file;        // Puntero al archivo abierto
-    struct list_elem elem;    // Elemento de lista para enlazar descriptores
-};
 
 
 #endif /* threads/thread.h */

@@ -196,8 +196,16 @@ lock_acquire (struct lock *lock)
   ASSERT (!intr_context ());
   ASSERT (!lock_held_by_current_thread (lock));
 
+  struct thread *current = thread_current ();
+  
+  // Donar la prioridad si el hilo actual tiene mayor prioridad 
+  if (lock->holder != NULL && current->priority > lock->holder->priority) 
+    {
+      lock->holder->priority = current->priority;
+    }
+
   sema_down (&lock->semaphore);
-  lock->holder = thread_current ();
+  lock->holder = current;
 }
 
 /* Tries to acquires LOCK and returns true if successful or false
@@ -230,6 +238,11 @@ lock_release (struct lock *lock)
 {
   ASSERT (lock != NULL);
   ASSERT (lock_held_by_current_thread (lock));
+
+  struct thread *current = thread_current ();
+
+  // Restaurar la prioridad original 
+  current->priority = current->original_priority;
 
   lock->holder = NULL;
   sema_up (&lock->semaphore);

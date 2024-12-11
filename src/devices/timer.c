@@ -7,7 +7,9 @@
 #include "threads/interrupt.h"
 #include "threads/synch.h"
 #include "threads/thread.h"
-  
+#include "threads/switch.h"
+#include "lib/kernel/list.h"  // Para utilizar listas
+
 /* See [8254] for hardware details of the 8254 timer chip. */
 
 #if TIMER_FREQ < 19
@@ -24,6 +26,18 @@ static int64_t ticks;
    Initialized by timer_calibrate(). */
 static unsigned loops_per_tick;
 
+/* Lista de hilos en espera */
+static struct list sleep_list;
+
+/* Función de comparación para ordenar la lista de espera */
+static bool
+wake_up_tick_less(const struct list_elem *a, const struct list_elem *b, void *aux UNUSED) 
+{
+  const struct thread *t_a = list_entry(a, struct thread, elem_sleep);
+  const struct thread *t_b = list_entry(b, struct thread, elem_sleep);
+  return t_a->wake_up_tick < t_b->wake_up_tick;
+}
+
 static intr_handler_func timer_interrupt;
 static bool too_many_loops (unsigned loops);
 static void busy_wait (int64_t loops);
@@ -37,6 +51,7 @@ timer_init (void)
 {
   pit_configure_channel (0, 2, TIMER_FREQ);
   intr_register_ext (0x20, timer_interrupt, "8254 Timer");
+  list_init(&sleep_list);  // Inicializar la lista de hilos en espera
 }
 
 /* Calibrates loops_per_tick, used to implement brief delays. */
@@ -84,16 +99,22 @@ timer_elapsed (int64_t then)
   return timer_ticks () - then;
 }
 
-/* Sleeps for approximately TICKS timer ticks.  Interrupts must
-   be turned on. */
+/* Reimplementación eficiente de timer_sleep */
 void
-timer_sleep (int64_t ticks) 
+timer_sleep (int64_t ticks_sleep) 
 {
-  int64_t start = timer_ticks ();
+  int64_t start = timer_ticks();
+  struct thread *current_thread = thread_current();
+  current_thread->wake_up_tick = start + ticks_sleep;
 
-  ASSERT (intr_get_level () == INTR_ON);
-  while (timer_elapsed (start) < ticks) 
-    thread_yield ();
+  enum intr_level old_level = intr_disable();
+
+  /* Insertar el hilo en la lista de espera de forma ordenada */
+  list_insert_ordered(&sleep_list, &current_thread->elem_sleep, wake_up_tick_less, NULL);
+
+  thread_block();  // Bloquear el hilo
+
+  intr_set_level(old_level);
 }
 
 /* Sleeps for approximately MS milliseconds.  Interrupts must be
@@ -165,13 +186,26 @@ timer_print_stats (void)
 {
   printf ("Timer: %"PRId64" ticks\n", timer_ticks ());
 }
-
+
+
 /* Timer interrupt handler. */
 static void
 timer_interrupt (struct intr_frame *args UNUSED)
 {
   ticks++;
-  thread_tick ();
+  thread_tick();
+
+  /* Despertar hilos cuya espera ha finalizado */
+  while (!list_empty(&sleep_list)) {
+    struct list_elem *e = list_front(&sleep_list);
+    struct thread *t = list_entry(e, struct thread, elem_sleep);
+
+    if (t->wake_up_tick > ticks)
+      break;  // Los demás hilos aún no deben despertarse
+
+    list_pop_front(&sleep_list);
+    thread_unblock(t);
+  }
 }
 
 /* Returns true if LOOPS iterations waits for more than one timer
@@ -217,15 +251,15 @@ real_time_sleep (int64_t num, int32_t denom)
      ---------------------- = NUM * TIMER_FREQ / DENOM ticks. 
      1 s / TIMER_FREQ ticks
   */
-  int64_t ticks = num * TIMER_FREQ / denom;
+  int64_t ticks_sleep = num * TIMER_FREQ / denom;
 
   ASSERT (intr_get_level () == INTR_ON);
-  if (ticks > 0)
+  if (ticks_sleep > 0)
     {
       /* We're waiting for at least one full timer tick.  Use
          timer_sleep() because it will yield the CPU to other
          processes. */                
-      timer_sleep (ticks); 
+      timer_sleep (ticks_sleep); 
     }
   else 
     {

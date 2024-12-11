@@ -73,6 +73,22 @@ static void schedule (void);
 void thread_schedule_tail (struct thread *prev);
 static tid_t allocate_tid (void);
 
+// Función de comparación para ordenar hilos por prioridad (de mayor a menor) 
+bool thread_priority_less (const struct list_elem *a, const struct list_elem *b, void *aux UNUSED) 
+{
+  const struct thread *t_a = list_entry(a, struct thread, elem);
+  const struct thread *t_b = list_entry(b, struct thread, elem);
+  return t_a->priority > t_b->priority;  // Mayor prioridad primero 
+}
+
+// Restaura la prioridad original del hilo 
+void
+thread_restore_priority (void) 
+{
+  struct thread *cur = thread_current ();
+  cur->priority = cur->original_priority;
+}
+
 /* Initializes the threading system by transforming the code
    that's currently running into a thread.  This can't work in
    general and it is possible in this case only because loader.S
@@ -226,6 +242,9 @@ thread_create (const char *name, int priority,
   /* Add to run queue. */
   thread_unblock (t);
 
+  if (thread_current ()->priority < t->priority)
+    thread_yield ();
+
   return tid;
 }
 
@@ -262,8 +281,15 @@ thread_unblock (struct thread *t)
 
   old_level = intr_disable ();
   ASSERT (t->status == THREAD_BLOCKED);
-  list_push_back (&ready_list, &t->elem);
+  
+  // Insertar ordenadamente en ready_list según prioridad 
+  list_insert_ordered (&ready_list, &t->elem, thread_priority_less, NULL);
+  
   t->status = THREAD_READY;
+ 
+  if (thread_current ()->priority < t->priority)
+    thread_yield ();
+
   intr_set_level (old_level);
 }
 
@@ -333,7 +359,10 @@ thread_yield (void)
 
   old_level = intr_disable ();
   if (cur != idle_thread) 
-    list_push_back (&ready_list, &cur->elem);
+    {
+      // Insertar ordenadamente en ready_list según prioridad 
+      list_insert_ordered (&ready_list, &cur->elem, thread_priority_less, NULL);
+    }
   cur->status = THREAD_READY;
   schedule ();
   intr_set_level (old_level);
@@ -360,7 +389,15 @@ thread_foreach (thread_action_func *func, void *aux)
 void
 thread_set_priority (int new_priority) 
 {
-  thread_current ()->priority = new_priority;
+  struct thread *cur = thread_current ();
+
+  cur->priority = new_priority;
+
+  // Restaurar la prioridad original si no hay donación 
+  if (cur->priority < cur->original_priority)
+    cur->priority = cur->original_priority;
+
+  thread_yield ();
 }
 
 /* Returns the current thread's priority. */
@@ -494,6 +531,10 @@ init_thread (struct thread *t, const char *name, int priority)
   old_level = intr_disable ();
   list_push_back (&all_list, &t->allelem);
   intr_set_level (old_level);
+
+  t->priority = priority;
+  t->original_priority = priority;  // Inicializar la prioridad original
+
 }
 
 /* Allocates a SIZE-byte frame at the top of thread T's stack and

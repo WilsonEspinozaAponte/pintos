@@ -102,6 +102,14 @@ struct thread
     /* Shared between thread.c and synch.c. */
     struct list_elem elem;              /* List element. */
 
+   // Tiempo de despertar 
+   int64_t wake_up_tick;
+
+   // Elemento de la lista para la lista de espera 
+   struct list_elem elem_sleep;
+
+   int original_priority;              // Prioridad original del hilo (antes de recibir una donacion)
+
 #ifdef USERPROG
     /* Owned by userprog/process.c. */
     uint32_t *pagedir;                  /* Page directory. */
@@ -152,5 +160,6 @@ void thread_set_nice (int);
 int thread_get_recent_cpu (void);
 int thread_get_load_avg (void);
 
+void thread_restore_priority (void);  // Función para restaurar prioridad original
 
 #endif /* threads/thread.h */
